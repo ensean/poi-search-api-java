@@ -171,7 +171,7 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
 }
 ```
 
-**注意**: `distance` 字段表示该 POI 到查询位置的距离（单位：米），由 AWS SearchNearby API 直接返回。
+**注意**: `distance` 字段表示该 POI 到查询位置的距离（单位：米），使用 Haversine 公式计算得出。
 
 **错误响应示例**:
 ```json
