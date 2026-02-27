@@ -4,15 +4,15 @@
 
 ## 🌟 核心特性
 
-- 🚀 **双服务集成**: 优先使用 AWS Location Service (SearchPlaceIndexForText API)，自动降级到 Google Maps
+- 🚀 **双服务集成**: 优先使用 AWS Geo Places V2 (SearchNearby API)，自动降级到 Google Maps
 - 🔄 **智能 Fallback**: AWS 无结果时自动切换到 Google Maps
 - 📍 **灵活搜索**: 支持经纬度、半径、关键词搜索
-- ⚡ **高性能**: 基于 Spring Boot 3.x 和 Java 17，使用 AWS SDK 2.28.0
+- ⚡ **高性能**: 基于 Spring Boot 3.x 和 Java 17，使用 AWS SDK 2.34.0
+- 🎉 **零配置**: 使用 Places V2 API，**无需创建 Place Index**！
 - 🛡️ **参数验证**: 使用 Bean Validation 进行输入验证
 - 📊 **日志记录**: SLF4J + Logback 完整日志
 - 🏗️ **分层架构**: Controller → Service → AWS/Google 清晰分层
-- 📏 **距离信息**: 返回每个 POI 到查询位置的精确距离（Haversine 公式计算）
-- 🎯 **智能定位**: 使用 BiasPosition 参数优先返回查询位置附近的结果
+- 📏 **精确距离**: API 直接返回每个 POI 到查询位置的距离（米）
 
 ## 📁 项目结构
 
@@ -48,7 +48,7 @@ poi-search-api-java/
 - **Java 17**
 - **Spring Boot 3.2.2**
 - **Maven**
-- **AWS SDK 2.28.0** (Location Service - SearchPlaceIndexForText API)
+- **AWS SDK 2.34.0** (Geo Places V2 - SearchNearby API)
 - **Google Maps Services Java Client**
 - **Lombok** (减少样板代码)
 - **SLF4J + Logback** (日志)
@@ -57,9 +57,10 @@ poi-search-api-java/
 
 - JDK 17 或更高版本
 - Maven 3.6+
-- **AWS 账号**（需配置 Location Service）
-  - ✅ 创建 Place Index（必需）
-  - ✅ 配置 IAM 权限（`geo:SearchPlaceIndexForText`）
+- **AWS 账号**
+  - ✅ AWS 访问密钥 (Access Key ID & Secret Access Key)
+  - ✅ IAM 权限：`geo-places:SearchNearby`
+  - ❌ **不需要**创建 Place Index（Places V2 的新特性！）
 - Google Maps API 密钥（作为备用服务）
 
 ## 🚀 快速开始
@@ -78,11 +79,10 @@ cd ~/poi-search-api-java
 # Server Configuration
 server.port=3000
 
-# AWS Location Service Configuration (必需)
+# AWS Geo Places Configuration (Places V2 API)
 aws.region=us-east-1                              # AWS 区域
 aws.access-key-id=你的AWS访问密钥                  # AWS Access Key ID
 aws.secret-access-key=你的AWS密钥                  # AWS Secret Access Key
-aws.location.index-name=你的Place_Index名称        # Place Index 名称（在 AWS Console 创建）
 
 # Google Maps Configuration (作为备用服务)
 google.maps.api-key=你的Google_Maps_API密钥
@@ -93,9 +93,9 @@ logging.level.com.example.poisearch=DEBUG
 ```
 
 **配置说明:**
-- `aws.location.index-name`: 在 AWS Location Service 中创建的 Place Index 名称（例如：`MyPlaceIndex`）
-- 该配置项是 **必需的**，因为 `SearchPlaceIndexForText` API 需要指定要查询的索引
-- 如果 AWS 配置错误或查询失败，系统会自动降级到 Google Maps
+- **简化配置**: 不再需要配置 `aws.location.index-name`！
+- **Places V2 优势**: SearchNearby API 无需预先创建 Place Index，开箱即用
+- **Fallback 机制**: 如果 AWS 配置错误或查询失败，系统会自动降级到 Google Maps
 
 ### 3. 编译项目
 
@@ -178,7 +178,7 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
 }
 ```
 
-**注意**: `distance` 字段表示该 POI 到查询位置的距离（单位：米），使用 Haversine 公式计算得出。
+**注意**: `distance` 字段表示该 POI 到查询位置的距离（单位：米），由 AWS SearchNearby API 直接返回。
 
 **错误响应示例**:
 ```json
@@ -191,24 +191,9 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
 }
 ```
 
-## 🔧 AWS Location Service 配置
+## 🔧 AWS Geo Places 配置
 
-### 1. 创建 Place Index (必需)
-
-**重要**: 本项目使用 `SearchPlaceIndexForText` API，必须先创建 Place Index 才能使用。
-
-1. 登录 [AWS Console](https://console.aws.amazon.com/)
-2. 进入 **Amazon Location Service**
-3. 点击 **Place indexes** → **Create place index**
-4. 配置:
-   - **Name**: 例如 `MyPlaceIndex`（这个名称需要填入 `aws.location.index-name` 配置项）
-   - **Data provider**:
-     - **Esri**: 更适合全球范围的 POI 数据
-     - **HERE**: 适合欧洲和北美地区
-   - **Pricing plan**: 选择合适的套餐
-5. 创建后复制 Index 名称到 `application.properties` 中的 `aws.location.index-name`
-
-### 2. 配置 IAM 权限
+### 配置 IAM 权限
 
 创建 IAM 用户或角色，附加以下权限策略:
 
@@ -219,20 +204,35 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
     {
       "Effect": "Allow",
       "Action": [
-        "geo:SearchPlaceIndexForText"
+        "geo-places:SearchNearby"
       ],
-      "Resource": "arn:aws:geo:us-east-1:YOUR_ACCOUNT_ID:place-index/YOUR_INDEX_NAME"
+      "Resource": "*"
     }
   ]
 }
 ```
 
-**技术说明**: 本项目使用 `SearchPlaceIndexForText` API 配合 `BiasPosition` 参数实现附近 POI 搜索：
-- **Place Index** (必需): 指定要查询的地理数据索引，必须在 AWS Console 中预先创建
-- **BiasPosition**: 设置偏好位置，优先返回靠近该位置的结果
-- **关键词搜索**: 支持输入关键词（如 "restaurant"）进行文本搜索，如未提供则默认搜索 "places"
-- **手动距离计算**: 使用 Haversine 公式精确计算每个 POI 的距离
-- **半径过滤**: 根据指定半径过滤结果，确保只返回范围内的 POI
+**重要说明**:
+- ✅ **无需创建 Place Index**: Places V2 的 SearchNearby API 不需要预先创建索引
+- ✅ **简化权限**: Resource 设置为 `*` 即可，无需指定特定资源
+- ✅ **零配置**: 只需 AWS 访问密钥即可立即使用
+
+**技术优势 (Places V2 vs Places V1)**:
+
+| 特性 | Places V1 (旧) | Places V2 (新) |
+|------|---------------|---------------|
+| **Place Index** | ✗ 必须预先创建 | ✅ 无需创建 |
+| **配置复杂度** | 高（需配置索引名称） | 低（仅需密钥） |
+| **权限管理** | 需指定具体索引资源 | 通配符即可 |
+| **API** | SearchPlaceIndexForText | SearchNearby |
+| **距离计算** | 手动计算（Haversine） | API 直接返回 |
+| **半径参数** | BiasPosition（不精确） | queryRadius（精确） |
+
+**SearchNearby API 特性**:
+- **原生附近搜索**: 专为"查找附近"场景设计，不是文本搜索的附加功能
+- **精确半径控制**: 通过 `queryRadius` 参数精确指定搜索范围
+- **分类过滤**: 支持按 POI 类别过滤（如 restaurant、hotel 等）
+- **距离信息**: API 直接返回每个 POI 到查询点的距离（米）
 
 ## 🗺️ Google Maps API 配置
 
@@ -376,21 +376,21 @@ docker run -p 3000:3000 \
 ### 问题: AWS 返回空结果或报错
 
 **可能原因**:
-1. **Place Index 名称配置错误**: `aws.location.index-name` 与 AWS Console 中创建的名称不匹配
-2. **Place Index 不存在**: 未在 AWS Location Service 中创建 Place Index
-3. **AWS 凭证权限不足**: IAM 用户/角色缺少 `geo:SearchPlaceIndexForText` 权限
-4. **查询的地理位置没有 POI 数据**: 某些偏远地区可能没有数据
-5. **关键词不匹配**: 搜索关键词与数据提供商的类别不匹配
+1. **AWS 凭证配置错误**: Access Key ID 或 Secret Access Key 不正确
+2. **IAM 权限不足**: IAM 用户/角色缺少 `geo-places:SearchNearby` 权限
+3. **查询的地理位置没有 POI 数据**: 某些偏远地区可能没有数据
+4. **半径设置过小**: 尝试增大搜索半径
+5. **区域配置错误**: `aws.region` 设置不正确
 
 **调试步骤**:
 1. 查看日志: `logging.level.com.example.poisearch=DEBUG`
-2. 验证 Place Index:
+2. 验证 AWS 凭证:
    ```bash
-   aws location describe-place-index --index-name YourIndexName
+   aws sts get-caller-identity
    ```
-3. 验证 IAM 权限（确保有 `geo:SearchPlaceIndexForText` 权限）
-4. 尝试不同的坐标和关键词
-5. 检查 AWS Console 中 Place Index 的状态是否为 "Active"
+3. 验证 IAM 权限（确保有 `geo-places:SearchNearby` 权限）
+4. 尝试不同的坐标、半径和关键词
+5. 检查 AWS 区域是否正确（Places V2 支持的区域）
 
 ### 问题: Google Maps fallback 不工作
 

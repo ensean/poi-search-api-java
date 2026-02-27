@@ -5,12 +5,11 @@ import com.example.poisearch.model.POI;
 import com.example.poisearch.model.POISearchRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import software.amazon.awssdk.services.location.LocationClient;
-import software.amazon.awssdk.services.location.model.SearchPlaceIndexForTextRequest;
-import software.amazon.awssdk.services.location.model.SearchPlaceIndexForTextResponse;
-import software.amazon.awssdk.services.location.model.SearchForTextResult;
+import software.amazon.awssdk.services.geoplaces.GeoPlacesClient;
+import software.amazon.awssdk.services.geoplaces.model.SearchNearbyRequest;
+import software.amazon.awssdk.services.geoplaces.model.SearchNearbyResponse;
+import software.amazon.awssdk.services.geoplaces.model.SearchNearbyResultItem;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -20,115 +19,113 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AWSLocationService {
 
-    private final LocationClient locationClient;
-
-    @Value("${aws.location.index-name}")
-    private String indexName;
+    private final GeoPlacesClient geoPlacesClient;
 
     public List<POI> searchNearby(POISearchRequest request) {
         try {
-            log.info("Searching AWS Location Service with SearchPlaceIndexForText API, params: {}", request);
+            log.info("Searching AWS Geo Places with SearchNearby API (Places V2), params: {}", request);
 
-            // Build search query - use query parameter or search for "places" near the location
-            String searchText = request.getQuery() != null && !request.getQuery().isEmpty()
-                    ? request.getQuery()
-                    : "places";
+            // Set radius (default to 1000 meters if not provided)
+            Integer radius = request.getRadius() != null ? request.getRadius() : 1000;
 
-            // Build SearchPlaceIndexForText request with bias position for nearby results
-            SearchPlaceIndexForTextRequest awsRequest = SearchPlaceIndexForTextRequest.builder()
-                    .indexName(indexName)
-                    .text(searchText)
-                    .biasPosition(request.getLng(), request.getLat()) // AWS uses [lng, lat] order
+            // Build SearchNearby request - NO Place Index required!
+            SearchNearbyRequest.Builder requestBuilder = SearchNearbyRequest.builder()
+                    .queryPosition(request.getLng(), request.getLat()) // AWS uses [lng, lat] order
                     .maxResults(50)
-                    .build();
+                    .queryRadius(radius.longValue()); // Radius in meters
 
-            SearchPlaceIndexForTextResponse response = locationClient.searchPlaceIndexForText(awsRequest);
+            // Add filter by category if query is provided
+            if (request.getQuery() != null && !request.getQuery().isEmpty()) {
+                requestBuilder.filter(builder -> builder
+                        .includeCategories(request.getQuery()) // Filter by category
+                );
+            }
 
-            if (response.results() == null || response.results().isEmpty()) {
-                log.info("No results from AWS Location Service SearchPlaceIndexForText");
+            SearchNearbyRequest awsRequest = requestBuilder.build();
+            SearchNearbyResponse response = geoPlacesClient.searchNearby(awsRequest);
+
+            if (response.resultItems() == null || response.resultItems().isEmpty()) {
+                log.info("No results from AWS Geo Places SearchNearby");
                 return List.of();
             }
 
-            // Convert and calculate distances
-            Integer radius = request.getRadius() != null ? request.getRadius() : 1000;
-            List<POI> pois = response.results().stream()
-                    .map(result -> convertToPOI(result, request.getLat(), request.getLng()))
-                    .filter(poi -> poi.getDistance() != null && poi.getDistance() <= radius) // Filter by radius
+            List<POI> pois = response.resultItems().stream()
+                    .map(this::convertToPOI)
                     .collect(Collectors.toList());
 
-            log.info("AWS SearchPlaceIndexForText returned {} results within {} meters", pois.size(), radius);
+            log.info("AWS SearchNearby returned {} results", pois.size());
             return pois;
 
         } catch (Exception e) {
-            log.error("AWS Location Service SearchPlaceIndexForText error with index '{}': {}",
-                    indexName, e.getMessage(), e);
+            log.error("AWS Geo Places SearchNearby error: {}", e.getMessage(), e);
 
             String errorMessage = e.getMessage();
-            if (errorMessage != null && errorMessage.contains("ResourceNotFoundException")) {
+            if (errorMessage != null && errorMessage.contains("AccessDeniedException")) {
                 throw new RuntimeException(
-                    "AWS Place Index '" + indexName + "' not found. " +
-                    "Please create a Place Index in AWS Location Service console and " +
-                    "update aws.location.index-name in application.properties", e);
-            } else if (errorMessage != null && errorMessage.contains("AccessDeniedException")) {
-                throw new RuntimeException(
-                    "Access denied to AWS Place Index '" + indexName + "'. " +
-                    "Please ensure IAM user/role has 'geo:SearchPlaceIndexForText' permission", e);
+                    "Access denied to AWS Geo Places. " +
+                    "Please ensure IAM user/role has 'geo-places:SearchNearby' permission", e);
             }
 
-            throw new RuntimeException("AWS Location Service error: " + e.getMessage(), e);
+            throw new RuntimeException("AWS Geo Places error: " + e.getMessage(), e);
         }
     }
 
-    private POI convertToPOI(SearchForTextResult result, double queryLat, double queryLng) {
-        var place = result.place();
-        double poiLat = place.geometry().point().get(1);
-        double poiLng = place.geometry().point().get(0);
+    private POI convertToPOI(SearchNearbyResultItem item) {
+        Double poiLat = item.position() != null && item.position().size() >= 2
+                ? item.position().get(1) : null;
+        Double poiLng = item.position() != null && item.position().size() >= 2
+                ? item.position().get(0) : null;
 
-        // Calculate distance from query position
-        double distance = calculateDistance(queryLat, queryLng, poiLat, poiLng);
+        // Distance is provided directly by the API (convert Long to Double)
+        Double distance = item.distance() != null ? item.distance().doubleValue() : null;
 
         return POI.builder()
-                .name(place.label() != null ? place.label() : "Unknown")
-                .address(formatAddress(place))
-                .coordinates(new Coordinates(poiLat, poiLng))
-                .type(place.categories() != null && !place.categories().isEmpty()
-                        ? place.categories().get(0)
+                .name(item.title() != null ? item.title() : "Unknown")
+                .address(formatAddress(item))
+                .coordinates(poiLat != null && poiLng != null
+                        ? new Coordinates(poiLat, poiLng)
                         : null)
-                .placeId(result.placeId())
+                .type(item.placeType() != null ? item.placeType().toString() : null)
+                .placeId(item.placeId())
                 .distance(distance)
                 .build();
     }
 
-    private double calculateDistance(double lat1, double lng1, double lat2, double lng2) {
-        final double R = 6371e3; // Earth radius in meters
-        double φ1 = Math.toRadians(lat1);
-        double φ2 = Math.toRadians(lat2);
-        double Δφ = Math.toRadians(lat2 - lat1);
-        double Δλ = Math.toRadians(lng2 - lng1);
+    private String formatAddress(SearchNearbyResultItem item) {
+        if (item.address() != null) {
+            var address = item.address();
+            StringBuilder sb = new StringBuilder();
 
-        double a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            if (address.label() != null) {
+                return address.label();
+            }
 
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            if (address.street() != null) {
+                sb.append(address.street()).append(", ");
+            }
+            if (address.locality() != null) sb.append(address.locality()).append(", ");
+            if (address.region() != null) {
+                var region = address.region();
+                if (region.name() != null) {
+                    sb.append(region.name()).append(", ");
+                }
+            }
+            if (address.country() != null) {
+                var country = address.country();
+                if (country.name() != null) {
+                    sb.append(country.name());
+                }
+            }
 
-        return R * c; // Distance in meters
-    }
+            String result = sb.toString();
+            if (result.endsWith(", ")) {
+                result = result.substring(0, result.length() - 2);
+            }
 
-    private String formatAddress(software.amazon.awssdk.services.location.model.Place place) {
-        StringBuilder address = new StringBuilder();
-        
-        if (place.street() != null) address.append(place.street()).append(", ");
-        if (place.municipality() != null) address.append(place.municipality()).append(", ");
-        if (place.region() != null) address.append(place.region()).append(", ");
-        if (place.country() != null) address.append(place.country());
-        
-        String result = address.toString();
-        if (result.endsWith(", ")) {
-            result = result.substring(0, result.length() - 2);
+            return !result.isEmpty() ? result : "Unknown";
         }
-        
-        return !result.isEmpty() ? result : (place.label() != null ? place.label() : "Unknown");
+
+        return item.title() != null ? item.title() : "Unknown";
     }
 
 }

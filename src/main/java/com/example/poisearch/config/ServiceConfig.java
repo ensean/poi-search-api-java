@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.location.LocationClient;
+import software.amazon.awssdk.services.geoplaces.GeoPlacesClient;
 
 @Configuration
 public class ServiceConfig {
@@ -25,8 +25,8 @@ public class ServiceConfig {
     private String googleMapsApiKey;
 
     @Bean
-    public LocationClient locationClient() {
-        return LocationClient.builder()
+    public GeoPlacesClient geoPlacesClient() {
+        return GeoPlacesClient.builder()
                 .region(Region.of(awsRegion))
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(awsAccessKeyId, awsSecretAccessKey)
