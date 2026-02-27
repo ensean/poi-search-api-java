@@ -60,7 +60,21 @@ public class AWSLocationService {
             return pois;
 
         } catch (Exception e) {
-            log.error("AWS Location Service SearchPlaceIndexForText error", e);
+            log.error("AWS Location Service SearchPlaceIndexForText error with index '{}': {}",
+                    indexName, e.getMessage(), e);
+
+            String errorMessage = e.getMessage();
+            if (errorMessage != null && errorMessage.contains("ResourceNotFoundException")) {
+                throw new RuntimeException(
+                    "AWS Place Index '" + indexName + "' not found. " +
+                    "Please create a Place Index in AWS Location Service console and " +
+                    "update aws.location.index-name in application.properties", e);
+            } else if (errorMessage != null && errorMessage.contains("AccessDeniedException")) {
+                throw new RuntimeException(
+                    "Access denied to AWS Place Index '" + indexName + "'. " +
+                    "Please ensure IAM user/role has 'geo:SearchPlaceIndexForText' permission", e);
+            }
+
             throw new RuntimeException("AWS Location Service error: " + e.getMessage(), e);
         }
     }
