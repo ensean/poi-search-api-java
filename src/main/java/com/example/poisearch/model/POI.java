@@ -16,4 +16,5 @@ public class POI {
     private String type;
     private Double rating;
     private String placeId;
+    private Double distance; // Distance in meters from query position
 }

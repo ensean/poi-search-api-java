@@ -4,13 +4,15 @@
 
 ## 🌟 核心特性
 
-- 🚀 **双服务集成**: 优先使用 AWS Location Service，自动降级到 Google Maps
+- 🚀 **双服务集成**: 优先使用 AWS Location Service (SearchPlaceIndexForText API)，自动降级到 Google Maps
 - 🔄 **智能 Fallback**: AWS 无结果时自动切换到 Google Maps
 - 📍 **灵活搜索**: 支持经纬度、半径、关键词搜索
-- ⚡ **高性能**: 基于 Spring Boot 3.x 和 Java 17
+- ⚡ **高性能**: 基于 Spring Boot 3.x 和 Java 17，使用 AWS SDK 2.28.0
 - 🛡️ **参数验证**: 使用 Bean Validation 进行输入验证
 - 📊 **日志记录**: SLF4J + Logback 完整日志
 - 🏗️ **分层架构**: Controller → Service → AWS/Google 清晰分层
+- 📏 **距离信息**: 返回每个 POI 到查询位置的精确距离（Haversine 公式计算）
+- 🎯 **智能定位**: 使用 BiasPosition 参数优先返回查询位置附近的结果
 
 ## 📁 项目结构
 
@@ -46,7 +48,7 @@ poi-search-api-java/
 - **Java 17**
 - **Spring Boot 3.2.2**
 - **Maven**
-- **AWS SDK 2.x** (Location Service)
+- **AWS SDK 2.28.0** (Location Service - SearchPlaceIndexForText API)
 - **Google Maps Services Java Client**
 - **Lombok** (减少样板代码)
 - **SLF4J + Logback** (日志)
@@ -161,12 +163,15 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
       },
       "type": "park",
       "rating": 4.8,
-      "placeId": "ChIJ4zGFAZpYwokRGUGph3Mf37k"
+      "placeId": "ChIJ4zGFAZpYwokRGUGph3Mf37k",
+      "distance": 234.5
     }
   ],
   "count": 1
 }
 ```
+
+**注意**: `distance` 字段表示该 POI 到查询位置的距离（单位：米），由 AWS SearchNearby API 直接返回。
 
 **错误响应示例**:
 ```json
@@ -203,13 +208,18 @@ curl "http://localhost:3000/api/poi/search?lat=40.7580&lng=-73.9855&radius=1000&
     {
       "Effect": "Allow",
       "Action": [
-        "geo:SearchPlaceIndexForPosition"
+        "geo:SearchPlaceIndexForText"
       ],
       "Resource": "arn:aws:geo:us-east-1:YOUR_ACCOUNT_ID:place-index/YOUR_INDEX_NAME"
     }
   ]
 }
 ```
+
+**技术说明**: 本项目使用 `SearchPlaceIndexForText` API 配合 `BiasPosition` 参数实现附近 POI 搜索：
+- `BiasPosition`: 设置偏好位置，优先返回靠近该位置的结果
+- 手动距离计算: 使用 Haversine 公式精确计算每个 POI 的距离
+- 半径过滤: 根据指定半径过滤结果，确保只返回范围内的 POI
 
 ## 🗺️ Google Maps API 配置
 
